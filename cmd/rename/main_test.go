@@ -40,6 +40,34 @@ func TestRun(t *testing.T) {
 			wantCode: 2,
 			wantErr:  "invalid mapping",
 		},
+		{
+			name:     "repeated flags apply several renames",
+			args:     []string{"-c", "a=c", "-c", "b=d", "-t", "t1=t2"},
+			stdin:    "SELECT a, b FROM 't1' WHERE a > '1'",
+			wantCode: 0,
+			wantOut:  "SELECT c, d FROM 't2' WHERE c > '1'",
+		},
+		{
+			name:     "string literal sharing a mapped name is preserved",
+			args:     []string{"-t", "t1=t2", "-c", "a=c"},
+			stdin:    "SELECT a FROM 't1' WHERE a = 't1'",
+			wantCode: 0,
+			wantOut:  "SELECT c FROM 't2' WHERE c = 't1'",
+		},
+		{
+			name:     "no mappings pass the bytes through unchanged",
+			args:     []string{},
+			stdin:    "select a, * fRoM 't1' WHERE z <= 'x'",
+			wantCode: 0,
+			wantOut:  "select a, * fRoM 't1' WHERE z <= 'x'",
+		},
+		{
+			name:     "same new name across table and column maps is position based",
+			args:     []string{"-t", "a=t2", "-c", "a=c"},
+			stdin:    "SELECT a FROM 'a'",
+			wantCode: 0,
+			wantOut:  "SELECT c FROM 't2'",
+		},
 	}
 	for _, tc := range cases {
 		tc := tc

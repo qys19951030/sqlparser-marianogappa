@@ -387,10 +387,9 @@ func (r *rewriter) consumeWhere() error {
 		if operand.val != condition.Operand2 {
 			return fmt.Errorf("WHERE right operand mismatch at condition %d", conditionIdx)
 		}
-		if condition.Operand2IsField {
-			if operand.kind != kindIdent {
-				return fmt.Errorf("parsed field right operand is not an identifier")
-			}
+		// Only a bare identifier can occupy a field position; a quoted
+		// token is always a string literal, regardless of its content.
+		if condition.Operand2IsField && operand.kind == kindIdent {
 			r.renameColumn(operand)
 		}
 		conditionIdx++
@@ -437,8 +436,12 @@ func (r *rewriter) renameTable() error {
 }
 
 // renameColumn records an edit when tok holds a name present in the column
-// mapping. Quoted column positions keep their quoting style.
+// mapping. Quoted column positions keep their quoting style. The SELECT "*"
+// wildcard is not a column name and is never renamed.
 func (r *rewriter) renameColumn(tok token) {
+	if tok.val == "*" {
+		return
+	}
 	newName, ok := r.columnNames[tok.val]
 	if !ok {
 		return
