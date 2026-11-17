@@ -51,11 +51,31 @@ func TestRename(t *testing.T) {
 			want:   "SELECT a, c, d FROM 'b' WHERE a != '1' AND b = '2'",
 		},
 		{
-			name:    "SELECT fields are renamed but literals are not",
+			name:    "SELECT fields and WHERE fields are renamed, literals are not",
 			sql:     "SELECT a, b FROM 't1' WHERE a > '1'",
 			tables:  map[string]string{"t1": "t2"},
 			columns: map[string]string{"a": "c"},
-			want:    "SELECT c, b FROM 't2' WHERE a > '1'",
+			want:    "SELECT c, b FROM 't2' WHERE c > '1'",
+		},
+		{
+			name:    "SET literal named like a WHERE field stays untouched",
+			sql:     "UPDATE 't1' SET a = 'x' WHERE x = '2'",
+			tables:  map[string]string{"t1": "t2"},
+			columns: map[string]string{"x": "y"},
+			want:    "UPDATE 't2' SET a = 'x' WHERE y = '2'",
+		},
+		{
+			name:    "field-typed right operand is renamed, quoted operand is not",
+			sql:     "SELECT a, c, d FROM 'b' WHERE a != b",
+			columns: map[string]string{"a": "aa", "b": "bb"},
+			want:    "SELECT aa, c, d FROM 'b' WHERE aa != bb",
+		},
+		{
+			name:    "every condition field is renamed across AND chains",
+			sql:     "SELECT a, c, d FROM 'b' WHERE a != '1' AND b = '2'",
+			tables:  map[string]string{"b": "t2"},
+			columns: map[string]string{"a": "x", "b": "y"},
+			want:    "SELECT x, c, d FROM 't2' WHERE x != '1' AND y = '2'",
 		},
 		{
 			name:    "INSERT columns are renamed, values stay literal",

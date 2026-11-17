@@ -342,12 +342,18 @@ func (r *rewriter) rewriteDelete() error {
 	return r.consumeWhere()
 }
 
-// consumeWhere walks an optional WHERE clause without renaming anything yet.
+// consumeWhere walks an optional WHERE clause, renaming exactly the operands
+// that the parser classified as fields. Quoted literals are field positions
+// nowhere in a condition, so they are only walked over.
 func (r *rewriter) consumeWhere() error {
 	if !r.peekReserved("WHERE") {
+		if len(r.q.Conditions) != 0 {
+			return fmt.Errorf("missing WHERE clause for %d parsed conditions", len(r.q.Conditions))
+		}
 		return nil
 	}
 	r.pos++
+	conditionIdx := 0
 	for {
 		field, err := r.next()
 		if err != nil {
@@ -356,7 +362,14 @@ func (r *rewriter) consumeWhere() error {
 		if field.kind != kindIdent {
 			return fmt.Errorf("at WHERE: expected field")
 		}
-		// TODO: column rename for condition operands
+		if conditionIdx >= len(r.q.Conditions) {
+			return fmt.Errorf("more conditions than parsed")
+		}
+		condition := r.q.Conditions[conditionIdx]
+		if !condition.Operand1IsField || field.val != condition.Operand1 {
+			return fmt.Errorf("WHERE left operand mismatch at condition %d", conditionIdx)
+		}
+		r.renameColumn(field)
 		operator, err := r.next()
 		if err != nil {
 			return err
@@ -371,11 +384,23 @@ func (r *rewriter) consumeWhere() error {
 		if operand.kind != kindIdent && operand.kind != kindQuoted {
 			return fmt.Errorf("at WHERE: expected value")
 		}
-		// TODO: column rename for field-typed right operands
+		if operand.val != condition.Operand2 {
+			return fmt.Errorf("WHERE right operand mismatch at condition %d", conditionIdx)
+		}
+		if condition.Operand2IsField {
+			if operand.kind != kindIdent {
+				return fmt.Errorf("parsed field right operand is not an identifier")
+			}
+			r.renameColumn(operand)
+		}
+		conditionIdx++
 		if !r.peekWord("AND") {
 			break
 		}
 		r.pos++
+	}
+	if conditionIdx != len(r.q.Conditions) {
+		return fmt.Errorf("WHERE condition count mismatch")
 	}
 	return nil
 }
