@@ -162,6 +162,7 @@ func (r *rewriter) rewriteSelect() error {
 		return err
 	}
 	// SELECT field [AS alias] (, ...)*
+	fieldIdx := 0
 	for {
 		tok, err := r.next()
 		if err != nil {
@@ -170,7 +171,11 @@ func (r *rewriter) rewriteSelect() error {
 		if tok.kind != kindIdent {
 			return fmt.Errorf("at SELECT: expected field")
 		}
-		// TODO: column rename for SELECT fields and aliases
+		if fieldIdx >= len(r.q.Fields) || tok.val != r.q.Fields[fieldIdx] {
+			return fmt.Errorf("SELECT field mismatch at position %d", fieldIdx)
+		}
+		r.renameColumn(tok)
+		fieldIdx++
 		if r.peekReserved("AS") {
 			if _, err := r.next(); err != nil {
 				return err
@@ -182,7 +187,10 @@ func (r *rewriter) rewriteSelect() error {
 			if alias.kind != kindIdent {
 				return fmt.Errorf("at SELECT: expected field alias")
 			}
-			// TODO: column rename for aliases
+			if parsedAlias, ok := r.q.Aliases[tok.val]; !ok || alias.val != parsedAlias {
+				return fmt.Errorf("alias mismatch for field %q", tok.val)
+			}
+			r.renameColumn(alias)
 		}
 		if r.peekReserved("FROM") {
 			break
@@ -190,6 +198,9 @@ func (r *rewriter) rewriteSelect() error {
 		if err := r.expectReserved(","); err != nil {
 			return err
 		}
+	}
+	if fieldIdx != len(r.q.Fields) {
+		return fmt.Errorf("SELECT field count mismatch")
 	}
 	if err := r.expectReserved("FROM"); err != nil {
 		return err
@@ -211,6 +222,7 @@ func (r *rewriter) rewriteInsert() error {
 		return err
 	}
 	// Inserted column list.
+	fieldIdx := 0
 	for {
 		tok, err := r.next()
 		if err != nil {
@@ -219,7 +231,11 @@ func (r *rewriter) rewriteInsert() error {
 		if tok.kind != kindIdent {
 			return fmt.Errorf("at INSERT INTO: expected field")
 		}
-		// TODO: column rename for the INSERT column list
+		if fieldIdx >= len(r.q.Fields) || tok.val != r.q.Fields[fieldIdx] {
+			return fmt.Errorf("INSERT column mismatch at position %d", fieldIdx)
+		}
+		r.renameColumn(tok)
+		fieldIdx++
 		if r.peekReserved(")") {
 			r.pos++
 			break
@@ -227,6 +243,9 @@ func (r *rewriter) rewriteInsert() error {
 		if err := r.expectReserved(","); err != nil {
 			return err
 		}
+	}
+	if fieldIdx != len(r.q.Fields) {
+		return fmt.Errorf("INSERT column count mismatch")
 	}
 	if err := r.expectReserved("VALUES"); err != nil {
 		return err
@@ -273,6 +292,7 @@ func (r *rewriter) rewriteUpdate() error {
 	}
 	// SET field = quoted-literal (, ...)*; the field is a column position,
 	// the assigned literal is not.
+	setIdx := 0
 	for {
 		field, err := r.next()
 		if err != nil {
@@ -281,7 +301,11 @@ func (r *rewriter) rewriteUpdate() error {
 		if field.kind != kindIdent {
 			return fmt.Errorf("at UPDATE: expected field")
 		}
-		// TODO: column rename for SET fields
+		if _, ok := r.q.Updates[field.val]; !ok {
+			return fmt.Errorf("SET field %q not found in parsed query", field.val)
+		}
+		r.renameColumn(field)
+		setIdx++
 		if err := r.expectReserved("="); err != nil {
 			return err
 		}
@@ -292,12 +316,18 @@ func (r *rewriter) rewriteUpdate() error {
 		if value.kind != kindQuoted {
 			return fmt.Errorf("at UPDATE: expected quoted value")
 		}
+		if value.val != r.q.Updates[field.val] {
+			return fmt.Errorf("SET value mismatch for field %q", field.val)
+		}
 		if r.peekReserved("WHERE") {
 			break
 		}
 		if err := r.expectReserved(","); err != nil {
 			return err
 		}
+	}
+	if setIdx != len(r.q.Updates) {
+		return fmt.Errorf("SET field count mismatch")
 	}
 	return r.consumeWhere()
 }
@@ -379,6 +409,20 @@ func (r *rewriter) renameTable() error {
 		})
 	}
 	return nil
+}
+
+// renameColumn records an edit when tok holds a name present in the column
+// mapping. Quoted column positions keep their quoting style.
+func (r *rewriter) renameColumn(tok token) {
+	newName, ok := r.columnNames[tok.val]
+	if !ok {
+		return
+	}
+	r.edits = append(r.edits, edit{
+		start:       tok.start,
+		end:         tok.end,
+		replacement: r.replacement(tok, newName),
+	})
 }
 
 // replacement renders newName in the quoting style of the original token.
